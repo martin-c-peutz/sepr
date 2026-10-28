@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SEPR Spring Live-Coding Cheat Sheet</title>
+  <meta name="description" content="Personal recipe notes for TU Wien SEPR Spring Boot live coding. Patterns only — no finished solutions." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="toc">
+      <h1>SEPR Spring sheet</h1>
+      <p class="sub">Recipe · not solutions · package<br><code>at.ac.tuwien.sepr.assignment.individual</code></p>
+      <nav id="toc-nav">
+        <a href="#checklist">1. Checklist</a>
+        <a href="#templates">2. Templates</a>
+        <a href="#repositories">3. Repositories</a>
+        <a href="#validation">4. Validation &amp; errors</a>
+        <a href="#tests">5. Tests</a>
+        <a href="#intellij">6. IntelliJ &amp; docs</a>
+      </nav>
+      <div class="tools">
+        <button class="btn" id="theme-toggle" type="button">Dark</button>
+        <button class="btn" id="top-btn" type="button">Top</button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="page">
+        <div>
+          <span class="badge">Internet OK</span>
+          <span class="badge">AI not OK</span>
+          <span class="badge">Own notes</span>
+        </div>
+        <h1>Spring Boot live-coding cheat sheet</h1>
+        <p>Generic recipes taken from the assignment patterns (controller → service → repository → DTO → MockMvc). Placeholder names only (<code>Foo</code>, <code>FooDto</code>). Do not paste finished drill answers.</p>
+        <p class="muted">Paging defaults in this project: page <strong>0</strong>, size <strong>20</strong>, max size <strong>100</strong>. Always map entities to DTOs before leaving the service.</p>
+      </header>
+
+      <section id="checklist">
+        <h2>1. Endpoint checklist &amp; layer order</h2>
+        <div class="card">
+          <p><strong>Write the contract first</strong> (30 seconds): method + path, query/body params, defaults, status codes, response DTO. Then build in this order:</p>
+          <ol class="checklist">
+            <li>1. DTO record(s) — never return an entity</li>
+            <li>2. Repository method — derived <code>findBy…</code> or <code>@Query</code></li>
+            <li>3. <code>mvn test</code> / context load — broken repo names crash startup</li>
+            <li>4. Service interface + impl (<code>@Transactional</code>)</li>
+            <li>5. Controller (no business logic)</li>
+            <li>6. Endpoint / service test</li>
+            <li>7. Commit after each green step</li>
+          </ol>
+          <div class="callout">
+            Controllers only wire HTTP. Defaults, caps, filters, and mapping live in the <strong>service</strong>. Filtering that can be expressed as a query lives in the <strong>repository</strong>.
+          </div>
+        </div>
+      </section>
+
+      <section id="templates">
+        <h2>2. Generic templates (Foo)</h2>
+
+        <h3>PageDto (exact shape in this project)</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>public record PageDto&lt;T&gt;(
+    List&lt;T&gt; content,
+    int page,            // 0-based
+    int size,
+    long totalElements,
+    int totalPages) {}</pre></div>
+
+        <h3>Controller — GET list with optional filters + paging</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>@RestController
+@RequestMapping("/api/foos")
+public class FooController {
+  private final FooService fooService;
+  public FooController(FooService fooService) { this.fooService = fooService; }
+
+  @GetMapping
+  public PageDto&lt;FooSummaryDto&gt; search(
+      @RequestParam(required = false) String name,
+      @RequestParam(required = false) FooStatus status,
+      @RequestParam(required = false) Integer page,
+      @RequestParam(required = false) Integer size) {
+    return fooService.search(name, status, page, size);
+  }
+}</pre></div>
+
+        <h3>Controller — GET by id</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>@GetMapping("/{id}")
+public FooDetailDto findById(@PathVariable("id") Long id) throws NotFoundException {
+  return fooService.findById(id);
+}</pre></div>
+
+        <h3>Controller — POST → 201 + Location</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>@PostMapping
+public ResponseEntity&lt;FooDetailDto&gt; create(
+    @Valid @RequestBody FooCreateDto dto) throws ConflictException {
+  FooDetailDto created = fooService.create(dto);
+  URI location = ServletUriComponentsBuilder.fromCurrentRequest()
+      .path("/{id}")
+      .buildAndExpand(created.id())
+      .toUri();
+  return ResponseEntity.created(location).body(created);
+}</pre></div>
+
+        <h3>Controller — PUT</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>@PutMapping("/{id}")
+public FooDetailDto update(
+    @PathVariable("id") Long id,
+    @Valid @RequestBody FooUpdateDto dto)
+    throws NotFoundException, ConflictException {
+  return fooService.update(id, dto);
+}</pre></div>
+
+        <h3>Controller — DELETE → 204</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>@DeleteMapping("/{id}")
+@ResponseStatus(HttpStatus.NO_CONTENT)
+public void delete(@PathVariable("id") Long id) throws NotFoundException {
+  fooService.delete(id);
+}</pre></div>
+
+        <h3>Service impl — paging defaults + PageDto from Spring <code>Page</code></h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>@Service
+public class FooServiceImpl implements FooService {
+  private static final int DEFAULT_PAGE = 0;
+  private static final int DEFAULT_SIZE = 20;
+  private static final int MAX_SIZE = 100;
+
+  private final FooRepository fooRepository;
+  private final FooMapper fooMapper;
+
+  public FooServiceImpl(FooRepository fooRepository, FooMapper fooMapper) {
+    this.fooRepository = fooRepository;
+    this.fooMapper = fooMapper;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public PageDto&lt;FooSummaryDto&gt; search(
+      String name, FooStatus status, Integer page, Integer size) {
+    int resolvedPage = page == null ? DEFAULT_PAGE : Math.max(0, page);
+    int resolvedSize = size == null
+        ? DEFAULT_SIZE
+        : Math.min(MAX_SIZE, Math.max(1, size));
+
+    PageRequest pageable = PageRequest.of(
+        resolvedPage, resolvedSize, Sort.by(Sort.Direction.ASC, "id"));
+
+    Page&lt;Foo&gt; result = fooRepository.search(name, status, pageable);
+
+    return new PageDto&lt;&gt;(
+        result.getContent().stream().map(fooMapper::toSummaryDto).toList(),
+        result.getNumber(),
+        result.getSize(),
+        result.getTotalElements(),
+        result.getTotalPages());
+  }
+}</pre></div>
+        <div class="callout">
+          <code>page</code> = which slice (0-based). <code>size</code> = rows per slice. Spring turns <code>PageRequest</code> into SQL <code>LIMIT</code>/<code>OFFSET</code>/<code>ORDER BY</code> plus a count query. Prefer DB paging over loading everything into memory.
+        </div>
+      </section>
+
+      <section id="repositories">
+        <h2>3. Spring Data repositories</h2>
+
+        <h3>Derived-query keywords</h3>
+        <p class="muted">Method name → JPQL. Property path navigation: <code>findByPlayerId</code> → <code>where x.player.id = ?1</code>.</p>
+        <table>
+          <thead><tr><th>Keyword</th><th>Example</th><th>JPQL snippet</th></tr></thead>
+          <tbody>
+            <tr><td><code>findBy</code></td><td><code>findByEmail(String email)</code></td><td><code>… where x.email = ?1</code></td></tr>
+            <tr><td><code>And</code> / <code>Or</code></td><td><code>findByPlayerIdAndStatus(…)</code></td><td><code>… and …</code> / <code>… or …</code></td></tr>
+            <tr><td><code>Between</code></td><td><code>findByAgeBetween(a, b)</code></td><td><code>… between ?1 and ?2</code></td></tr>
+            <tr><td><code>LessThan</code></td><td><code>findByAgeLessThan(n)</code></td><td><code>… &lt; ?1</code></td></tr>
+            <tr><td><code>GreaterThanEqual</code></td><td><code>findByAgeGreaterThanEqual(n)</code></td><td><code>… &gt;= ?1</code></td></tr>
+            <tr><td><code>Like</code></td><td><code>findByNameLike(pattern)</code></td><td><code>… like ?1</code> (you supply <code>%</code>)</td></tr>
+            <tr><td><code>Containing</code></td><td><code>findByNameContaining(s)</code></td><td><code>… like ?1</code> (wrapped in <code>%</code>)</td></tr>
+            <tr><td><code>IgnoreCase</code></td><td><code>findByEmailIgnoreCase(e)</code></td><td><code>UPPER(x.email) = UPPER(?1)</code></td></tr>
+            <tr><td><code>In</code></td><td><code>findByIdIn(Collection&lt;Long&gt; ids)</code></td><td><code>… in ?1</code></td></tr>
+            <tr><td><code>IsNull</code></td><td><code>findByFinishedAtIsNull()</code></td><td><code>… is null</code></td></tr>
+            <tr><td><code>OrderBy…Desc</code></td><td><code>findByStatusOrderByIdDesc(s)</code></td><td><code>… order by x.id desc</code></td></tr>
+            <tr><td><code>countBy</code></td><td><code>countByPlayerId(id)</code></td><td><code>select count(x) …</code></td></tr>
+            <tr><td><code>existsBy</code></td><td><code>existsByEmail(email)</code></td><td>boolean existence query</td></tr>
+            <tr><td><code>deleteBy</code></td><td><code>deleteByPlayerId(id)</code></td><td>load then delete (lifecycle)</td></tr>
+            <tr><td>Nested</td><td><code>findByPlayerId(Long playerId, Pageable p)</code></td><td><code>where x.player.id = ?1</code></td></tr>
+          </tbody>
+        </table>
+
+        <h3>Paging types</h3>
+        <div class="grid-2">
+          <div class="card"><strong>Pageable</strong><br><span class="muted">Interface: page index, size, sort. Pass into repo methods.</span></div>
+          <div class="card"><strong>PageRequest</strong><br><span class="muted"><code>PageRequest.of(page, size, Sort.by("id"))</code> — concrete Pageable.</span></div>
+          <div class="card"><strong>Sort</strong><br><span class="muted"><code>Sort.by(Sort.Direction.DESC, "startedAt", "id")</code>. Always sort for stable pages.</span></div>
+          <div class="card"><strong>Page&lt;T&gt;</strong><br><span class="muted"><code>getContent()</code>, totals. <code>page.map(mapper::toDto)</code> maps items.</span></div>
+        </div>
+
+        <h3>@Query JPQL — optional filters, sum, @Param</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>public interface FooRepository extends JpaRepository&lt;Foo, Long&gt; {
+
+  Page&lt;Foo&gt; findByPlayerIdAndStatus(Long playerId, FooStatus status, Pageable pageable);
+
+  @Query("""
+      select f from Foo f
+      where (:status is null or f.status = :status)
+        and (:name is null or lower(f.name) like lower(concat('%', :name, '%')))
+        and (:playerId is null or f.player.id = :playerId)
+      """)
+  Page&lt;Foo&gt; search(
+      @Param("status") FooStatus status,
+      @Param("name") String name,
+      @Param("playerId") Long playerId,
+      Pageable pageable);
+
+  @Query("""
+      select coalesce(sum(f.pointChange), 0)
+      from Foo f
+      where f.player.id = :playerId and f.status = :status
+      """)
+  int sumPointChangeByPlayerIdAndStatus(
+      @Param("playerId") Long playerId,
+      @Param("status") FooStatus status);
+}</pre></div>
+        <div class="callout warn">
+          JPQL queries <strong>entities and fields</strong> (<code>f.player.id</code>), not table/column names. A bad derived method name fails context startup — fix early. Never put <code>page</code>/<code>size</code> as separate repo params; use <code>Pageable</code>.
+        </div>
+      </section>
+
+      <section id="validation">
+        <h2>4. Validation &amp; errors</h2>
+
+        <h3>Bean Validation on DTO records</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>public record FooCreateDto(
+    @NotBlank @Size(max = 100) String name,
+    @NotBlank @Email @Size(max = 255) String email,
+    @NotNull @Min(0) Integer score,
+    @NotNull @Max(100) Integer percent,
+    @Positive Long relatedId,
+    @Past Instant bornAt) {}</pre></div>
+        <p>Trigger with <code>@Valid @RequestBody</code> on the controller parameter. Common annotations: <code>@NotNull</code>, <code>@NotBlank</code>, <code>@Size</code>, <code>@Min</code>, <code>@Max</code>, <code>@Email</code>, <code>@Positive</code>, <code>@Past</code>.</p>
+
+        <h3>Exception → status (from <code>GlobalExceptionHandler</code>)</h3>
+        <table>
+          <thead><tr><th>Exception</th><th>HTTP</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>ConflictException</code></td><td class="status-warn">409 Conflict</td><td>Duplicate / state clash</td></tr>
+            <tr><td><code>NotFoundException</code></td><td class="status-warn">404 Not Found</td><td>Missing resource</td></tr>
+            <tr><td><code>ValidationException</code></td><td class="status-warn">422 Unprocessable Content</td><td>Business rules; includes <code>errors</code> list</td></tr>
+            <tr><td><code>MethodArgumentNotValidException</code></td><td class="status-warn">422</td><td>Bean Validation on body failed</td></tr>
+            <tr><td><code>HttpMessageNotReadableException</code></td><td class="status-warn">400 Bad Request</td><td>Broken JSON</td></tr>
+            <tr><td><code>MethodArgumentTypeMismatchException</code></td><td class="status-warn">400</td><td>e.g. <code>?status=FOO</code> not an enum</td></tr>
+            <tr><td><code>ErrorResponseException</code></td><td class="muted">passthrough</td><td>Uses its own status code</td></tr>
+            <tr><td><code>RuntimeException</code> (catch-all)</td><td class="status-bad">500</td><td>Logged; generic message</td></tr>
+          </tbody>
+        </table>
+
+        <h3>How to throw</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>throw new NotFoundException("No foo with id " + id + " exists");
+throw new ConflictException("Email already registered");
+throw new ValidationException("Invalid placement", List.of("square: out of bounds"));
+
+// orElseThrow style
+Foo foo = fooRepository.findById(id)
+    .orElseThrow(() -&gt; new NotFoundException("No foo with id " + id + " exists"));</pre></div>
+        <div class="callout">
+          Rule of thumb: malformed → <strong>400</strong>, well-formed but invalid → <strong>422</strong>, conflict with current state → <strong>409</strong>, missing → <strong>404</strong>. Controllers declare <code>throws</code>; the advice maps them.
+        </div>
+      </section>
+
+      <section id="tests">
+        <h2>5. Test templates</h2>
+        <p class="muted">Imports match this project's Boot 4 / tools.jackson stack. Profile <code>test</code> uses in-memory H2; <code>@Transactional</code> rolls back after each test.</p>
+
+        <h3>Endpoint test (MockMvc)</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+@Transactional
+class FooEndpointTest {
+
+  @Autowired private MockMvc mvc;
+  @Autowired private ObjectMapper objectMapper;
+
+  @Test
+  void searchFiltersAndPages() throws Exception {
+    mvc.perform(post("/api/foos")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {"name":"Alpha","email":"a@example.com"}
+                """))
+        .andExpect(status().isCreated())
+        .andExpect(header().exists("Location"));
+
+    mvc.perform(get("/api/foos")
+            .param("name", "Alpha")
+            .param("size", "500"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content.length()").value(1))
+        .andExpect(jsonPath("$.size").value(100))
+        .andExpect(jsonPath("$.content[0].secret").doesNotExist());
+
+    mvc.perform(get("/api/foos").param("status", "NOT_AN_ENUM"))
+        .andExpect(status().isBadRequest());
+  }
+}</pre></div>
+
+        <h3>Service test (AssertJ)</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+@SpringBootTest
+@ActiveProfiles("test")
+@Transactional
+class FooServiceTest {
+
+  @Autowired private FooService fooService;
+
+  @Test
+  void findByIdThrowsWhenMissing() {
+    assertThatThrownBy(() -&gt; fooService.findById(999_999L))
+        .isInstanceOf(NotFoundException.class);
+  }
+}</pre></div>
+
+        <h3>Maven commands</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>cd backend
+mvn test
+mvn test -Dtest=FooEndpointTest
+mvn test -Dtest=FooEndpointTest#searchFiltersAndPages</pre></div>
+      </section>
+
+      <section id="intellij">
+        <h2>6. IntelliJ (Linux) &amp; official docs</h2>
+        <table>
+          <thead><tr><th>Action</th><th>Shortcut</th></tr></thead>
+          <tbody>
+            <tr><td>Run test / class</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F10</kbd></td></tr>
+            <tr><td>Go to class</td><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td></tr>
+            <tr><td>Go to file</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td></tr>
+            <tr><td>Generate (ctor, getters…)</td><td><kbd>Alt</kbd>+<kbd>Insert</kbd></td></tr>
+            <tr><td>Reformat code</td><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>L</kbd></td></tr>
+            <tr><td>Rename</td><td><kbd>Shift</kbd>+<kbd>F6</kbd></td></tr>
+            <tr><td>Find usages</td><td><kbd>Alt</kbd>+<kbd>F7</kbd></td></tr>
+            <tr><td>Quick fix / intention</td><td><kbd>Alt</kbd>+<kbd>Enter</kbd></td></tr>
+            <tr><td>Recent files</td><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td></tr>
+            <tr><td>Search everywhere</td><td><kbd>Shift</kbd> <kbd>Shift</kbd></td></tr>
+          </tbody>
+        </table>
+
+        <h3>Keep these tabs open</h3>
+        <ul>
+          <li><a href="https://docs.spring.io/spring-data/jpa/reference/jpa/query-methods.html" target="_blank" rel="noopener">Spring Data JPA — query methods</a></li>
+          <li><a href="https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html" target="_blank" rel="noopener">Spring MVC — annotated controllers / request mapping</a></li>
+          <li><a href="https://jakarta.ee/specifications/bean-validation/3.0/jakarta-bean-validation-spec-3.0.html#builtinconstraints" target="_blank" rel="noopener">Jakarta Bean Validation — built-in constraints</a></li>
+          <li><a href="https://docs.spring.io/spring-framework/reference/testing/mockmvc.html" target="_blank" rel="noopener">Spring Framework — MockMvc</a></li>
+        </ul>
+      </section>
+
+      <footer>
+        Personal study notes for TU Wien SEPR. Patterns mirror the individual assignment API style. No drill solutions included.
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const root = document.documentElement;
+      const saved = localStorage.getItem("sepr-theme");
+      if (saved) root.setAttribute("data-theme", saved);
+      const btn = document.getElementById("theme-toggle");
+      function syncLabel() {
+        btn.textContent = root.getAttribute("data-theme") === "dark" ? "Light" : "Dark";
+      }
+      syncLabel();
+      btn.addEventListener("click", () => {
+        const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        localStorage.setItem("sepr-theme", next);
+        syncLabel();
+      });
+      document.getElementById("top-btn").addEventListener("click", () =>
+        window.scrollTo({ top: 0, behavior: "smooth" }));
+
+      document.querySelectorAll(".prewrap").forEach((wrap) => {
+        const btn = wrap.querySelector(".copy");
+        const pre = wrap.querySelector("pre");
+        if (!btn || !pre) return;
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(pre.innerText);
+            btn.textContent = "Copied";
+            btn.classList.add("ok");
+            setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("ok"); }, 1200);
+          } catch (e) {
+            btn.textContent = "Select+copy";
+          }
+        });
+      });
+
+      const links = [...document.querySelectorAll("#toc-nav a")];
+      const sections = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+      const obs = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          if (!en.isIntersecting) return;
+          const id = "#" + en.target.id;
+          links.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === id));
+        });
+      }, { rootMargin: "-20% 0px -70% 0px", threshold: 0 });
+      sections.forEach((s) => obs.observe(s));
+    })();
+  </script>
+</body>
+</html>
