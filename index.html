@@ -22,6 +22,7 @@
         <a href="#validation">4. Validation &amp; errors</a>
         <a href="#tests">5. Tests</a>
         <a href="#intellij">6. IntelliJ &amp; docs</a>
+        <a href="#run">7. Run &amp; try it</a>
       </nav>
       <div class="tools">
         <button class="btn" id="theme-toggle" type="button">Dark</button>
@@ -387,6 +388,79 @@ mvn test -Dtest=FooEndpointTest#searchFiltersAndPages</pre></div>
           <li><a href="https://docs.spring.io/spring-framework/reference/testing/mockmvc.html" target="_blank" rel="noopener">Spring Framework — MockMvc</a></li>
         </ul>
       </section>
+
+      <section id="run">
+        <h2>7. Run tests &amp; try the API</h2>
+        <p class="muted">Run everything from <code>backend/</code>. It needs JDK 26 and Maven; on Fedora, install Maven with <code>sudo dnf install maven</code> (or use IntelliJ's Maven tool window). There's no auth, so plain <code>curl</code> calls work straight away.</p>
+
+        <h3>Run the tests</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>cd backend
+mvn -version                                   # must say Java 26
+mvn test                                       # all tests (in-memory H2, profile "test")
+mvn test -Dtest=GameEndpointTest               # one class
+mvn test -Dtest=GameEndpointTest#startPlaceHintSubmitSurrenderRoundTrip   # one method
+mvn clean package                              # compile + test + build the JAR</pre></div>
+        <p>In IntelliJ, right-click <code>src/test/java</code> and choose <em>Run 'All Tests'</em>, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F10</kbd> inside a test.</p>
+
+        <h3>Start the backend (terminal 1)</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>cd backend
+mvn spring-boot:run                                         # http://localhost:8080, API under /api
+mvn spring-boot:run -Dspring-boot.run.profiles=datagen      # same, with example data
+# stop: Ctrl+C · logs: logs/blackboxchess.log · DB file: data/ (delete data/ to reset)</pre></div>
+
+        <h3>Try it with curl (terminal 2)</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>B=http://localhost:8080/api
+
+# 1. create a player   -> 201 + Location: /api/players/1
+curl -i -X POST $B/players -H 'Content-Type: application/json' \
+  -d '{"firstName":"Max","lastName":"Muster","email":"max@example.org"}'
+
+# 2. import a puzzle   -> 201
+curl -X POST $B/puzzles -H 'Content-Type: application/json' \
+  -d '{"boardSize":4,"solution":{"A4":"KING","C2":"ROOK"}}'
+
+# 3. create a scoring config (the first one becomes active) -> 201
+curl -X POST $B/scoring-configs -H 'Content-Type: application/json' \
+  -d '{"name":"demo","initialPuzzleScore":100,"hintCost":3,"wrongSubmissionCost":7,"solveBonus":0,"lossPenalty":0}'
+curl $B/scoring-configs/active
+
+# 4. start a game      -> 201 + Location: /api/games/1
+curl -i -X POST $B/games -H 'Content-Type: application/json' -d '{"playerId":1,"puzzleId":1}'
+
+# 5. play it
+curl -X PUT  $B/games/1/placements -H 'Content-Type: application/json' -d '{"piece":"KING","square":"A4"}'
+curl -X POST $B/games/1/hints      -H 'Content-Type: application/json' -d '{"square":"B3"}'
+curl -X PUT  $B/games/1/placements -H 'Content-Type: application/json' -d '{"piece":"ROOK","square":"C2"}'
+curl -X POST $B/games/1/submissions
+curl -X POST $B/games/1/surrenders
+
+# 6. read things
+curl "$B/players?page=0&amp;size=5"
+curl "$B/players/1/games?status=FINISHED"
+curl $B/players/1/statistics
+curl $B/rankings</pre></div>
+
+        <h3>Provoke the error statuses</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>curl -s -o /dev/null -w '%{http_code}\n' $B/players/999                 # 404 NotFound
+curl -w '\n%{http_code}\n' "$B/players/1/games?status=FOO"               # 400 type mismatch
+curl -w '\n%{http_code}\n' -X POST $B/players -H 'Content-Type: application/json' \
+  -d '{"firstName":"","lastName":"X","email":"nope"}'                    # 422 @Valid
+curl -w '\n%{http_code}\n' -X POST $B/games/1/submissions                # 422 if pieces are missing</pre></div>
+        <p class="muted">Tips: add <code>-i</code> to see the status and headers (for example <code>Location</code>), and pipe into <code>| jq</code> for pretty JSON. Every log line for one request shares the same <code>[requestId]</code>.</p>
+
+        <h3>Frontend (optional, terminal 3)</h3>
+        <div class="prewrap"><button class="copy" type="button">Copy</button>
+<pre>cd frontend
+npm install
+npm start            # Vite dev server; /api is proxied to http://localhost:8080
+npm run test:unit    # Vitest component tests</pre></div>
+      </section>
+
+
 
       <footer>
         Personal study notes for TU Wien SEPR. Patterns mirror the individual assignment API style. No drill solutions included.
