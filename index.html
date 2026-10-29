@@ -23,6 +23,7 @@
         <a href="#tests">5. Tests</a>
         <a href="#intellij">6. IntelliJ &amp; docs</a>
         <a href="#run">7. Run &amp; try it</a>
+        <a href="#crud">8. CRUD in 45 min</a>
       </nav>
       <div class="tools">
         <button class="btn" id="theme-toggle" type="button">Dark</button>
@@ -460,6 +461,40 @@ npm start            # Vite dev server; /api is proxied to http://localhost:8080
 npm run test:unit    # Vitest component tests</pre></div>
       </section>
 
+
+
+
+      <section id="crud">
+        <h2>8. CRUD in 45 minutes</h2>
+        <div class="card">
+          <p>Kickoff task shape: <strong>implement a backend CRUD endpoint</strong> covering endpoint, service, entity and validation. Internet OK · no AI. Mirror the patterns in sections 1–4.</p>
+          <table class="plain">
+            <thead><tr><th>Min</th><th>Do this</th></tr></thead>
+            <tbody>
+              <tr><td>0–3</td><td>Write the contract: method+path, body/query, statuses (201 / 200 / 204 / 404 / 409 / 422), response DTO fields.</td></tr>
+              <tr><td>3–8</td><td>Entity (+ enum if needed): <code>@Entity</code>, columns, LAZY relations, <code>@Enumerated(STRING)</code>.</td></tr>
+              <tr><td>8–12</td><td>Repository: prefer derived <code>findBy…</code> / <code>existsBy…</code>; <code>@Query</code> only for optional filters or aggregates.</td></tr>
+              <tr><td>12–18</td><td>DTO records + Bean Validation; Mapper <code>@Component</code>; Validator for uniqueness → <code>ConflictException</code>.</td></tr>
+              <tr><td>18–28</td><td>Service iface + Impl: <code>@Transactional</code>, page defaults 0/20/max 100, map to DTO <em>inside</em> the TX (<code>open-in-view: false</code>).</td></tr>
+              <tr><td>28–36</td><td>Controller: thin HTTP, <code>@Valid</code>, 201+Location, 204 deletes. Reuse existing exceptions / <code>GlobalExceptionHandler</code>.</td></tr>
+              <tr><td>36–42</td><td>Quick MockMvc test or curl. Fix compile errors first.</td></tr>
+              <tr><td>42–45</td><td>Happy path + one 422 + one 404. Done.</td></tr>
+            </tbody>
+          </table>
+          <p><strong>File order:</strong> entity → repository → DTOs → mapper → validator → service iface/impl → controller → test.</p>
+          <div class="callout">
+            Pitfalls: returning an entity; mapping after the TX ends; forgetting <code>@Valid</code>; using 400 for domain rules (use 422); typo in derived query property name (context fails to start); inventing new exception types instead of throwing the existing ones.
+          </div>
+          <h3>Pre-flight</h3>
+          <ul>
+            <li>Project JDK set; <code>backend/pom.xml</code> imported</li>
+            <li><code>mvn test</code> green before the slot</li>
+            <li>This cheat sheet open (or offline copy)</li>
+            <li>Know H2 reset: stop app, delete <code>backend/data/</code>, restart</li>
+            <li>No AI tabs — docs.spring.io + these notes only</li>
+          </ul>
+        </div>
+      </section>
 
 
       <footer>
